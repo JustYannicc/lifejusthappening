@@ -25,3 +25,17 @@ jscpd-report
 *.njsproj
 *.sln
 *.sw?
+
+# Swift/macOS
+.build/
+*.xcodeproj
+*.xcworkspace
+DerivedData/
+*.app
+Packages/
+Package.resolved
+*.swp
+xcuserdata/
+
+# Captured photos (local data)
+snapshot.jpg
