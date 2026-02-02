@@ -1,118 +1,76 @@
-# Tauri React Template
+# Life Just Happening
 
-A "batteries-included" template for building production-ready desktop applications with **Tauri v2**, **React**, and **TypeScript**. Designed with opinionated patterns that help both human developers and AI coding agents build well-architected apps from the start.
+A native macOS menu bar app that captures random moments throughout your day using your webcam.
 
-## Why This Template?
+## Features
 
-Most Tauri starters give you a blank canvas. This template gives you a **working application** with patterns already established:
+- **Menu bar only** - Lives quietly in your menu bar with a camera icon, no dock icon
+- **Random interval capture** - Takes photos at random intervals (default 45-60 minutes, configurable 15-120 min)
+- **Proper sleep/wake handling** - Captures immediately if scheduled time passed during sleep
+- **Multiple webcam support** - Drag to reorder priority, enable/disable cameras
+- **Storage options**:
+  - Photos app (add-only access - can't read your other photos)
+  - Custom folder of your choice
+- **Pause functionality** - Single click to pause indefinitely, or set duration (30m, 1h, 2h)
+- **Launch at login** - Prompts on first launch, configurable in settings
+- **Year-end Wrapped** - Generate a video slideshow of your captured moments
+- **All-in-one menu** - Everything accessible from the popover, no separate windows
 
-- **Type-safe Rust-TypeScript bridge** via tauri-specta.
-- **Performance patterns enforced by tooling** - all the usual linting plus ast-grep for common anti-patterns
-- **Multi-window architecture** already working (quick pane with global shortcut as a demo)
-- **Cross-platform ready** with platform-specific title bars, window controls, and native menu integration
-- **i18n built-in** with RTL support
+## Requirements
 
-## Stack
+- macOS 13.0 (Ventura) or later
+- Swift 5.9+
 
-| Layer    | Technologies                                    |
-| -------- | ----------------------------------------------- |
-| Frontend | React 19, TypeScript, Vite 7                    |
-| UI       | shadcn/ui v4, Tailwind CSS v4, Lucide React     |
-| State    | Zustand v5, TanStack Query v5                   |
-| Backend  | Tauri v2, Rust                                  |
-| Testing  | Vitest v4, Testing Library                      |
-| Quality  | ESLint, Prettier, ast-grep, knip, jscpd, clippy |
-
-## What's Already Built
-
-The template includes a working application with these features implemented:
-
-### Core Features
-
-- **Command Palette** (`Cmd+K`) - Searchable command launcher with keyboard navigation
-- **Quick Pane** - Global shortcut (`Cmd+Shift+.`) opens a floating window from any app, even fullscreen. Uses native NSPanel on macOS for proper fullscreen overlay behavior.
-- **Keyboard Shortcuts** - Platform-aware shortcuts with automatic menu integration
-- **Native Menus** - File, Edit, View menus built from JavaScript with full i18n support
-- **Preferences System** - Settings dialog with Rust-side persistence, React hooks, and type-safe access throughout
-- **Collapsible Sidebars** - Empty left and right sidebars with state persistence via resizable panels
-- **Theme System** - Light/dark mode with system preference detection, synced across windows
-- **Notifications** - Toast notifications for in-app feedback, plus native system notifications
-- **Auto-updates** - Tauri updater plugin configured with GitHub Releases integration and update checking on launch
-- **Logging** - Structured logging utilities for both Rust and TypeScript with consistent formatting
-- **Crash Recovery** - Emergency data persistence for recovering unsaved work after unexpected exits
-
-### Architecture Patterns
-
-- **Three-layer state management** - Clear decision tree: `useState` (component) → `Zustand` (global UI) → `TanStack Query` (persistent data "not owned by the app)
-- **Event-driven Rust-React bridge** - Menus, shortcuts, and command palette all route through the same command system
-- **React Compiler** - Automatic memoization means no manual `useMemo`/`useCallback` needed
-
-### Cross-Platform
-
-| Platform | Title Bar            | Window Controls | Bundle Format |
-| -------- | -------------------- | --------------- | ------------- |
-| macOS    | Custom with vibrancy | Traffic lights  | `.dmg`        |
-| Windows  | Custom               | Right side      | `.msi`        |
-| Linux    | Native + toolbar     | Native          | `.AppImage`   |
-
-Platform detection utilities, platform-specific UI strings ("Reveal in Finder" vs "Show in Explorer"), and separate Tauri configs per platform are all set up.
-
-### Developer Experience
-
-- **Type-safe Tauri commands** - tauri-specta generates TypeScript bindings from Rust, with full autocomplete and compile-time checking
-- **Static analysis** - ESLint, Prettier, ast-grep (architecture enforcement), knip (unused code), jscpd (duplication)
-- **Single quality gate** - `npm run check:all` runs TypeScript, ESLint, Prettier, ast-grep, clippy, and all tests
-- **Testing patterns** - Vitest setup with Tauri command mocking
-
-## Tauri Plugins Included
-
-| Plugin            | Purpose                          |
-| ----------------- | -------------------------------- |
-| single-instance   | Prevent multiple app instances   |
-| window-state      | Remember window position/size    |
-| fs                | File system access               |
-| dialog            | Native open/save dialogs         |
-| notification      | System notifications             |
-| clipboard-manager | Clipboard access                 |
-| global-shortcut   | System-wide keyboard shortcuts   |
-| updater           | In-app auto-updates              |
-| opener            | Open URLs/files with default app |
-| tauri-nspanel     | macOS floating panel behavior    |
-
-## AI-Ready Development
-
-This template is designed to work well with AI coding agents like Claude Code:
-
-- **Comprehensive documentation** in `docs/developer/` covering all patterns. Human readable but really designed to explain the "why" of certain patterns to AI agents. Not slop.
-- **Claude Code integration** - Custom commands (`/check`, `/cleanup`) and a couple of specialized agents
-- **Sensible file organization** - React code in `src/` with clear separation (components, hooks, stores, services), Rust in `src-tauri/src/` with modular command organization. Predictable structure for both humans and AI.
-
-## Getting Started
-
-See **[Using This Template](docs/USING_THIS_TEMPLATE.md)** for setup instructions and workflow guidance.
-
-### Quick Start
+## Building
 
 ```bash
-# Prerequisites: Node.js 18+, Rust (latest stable)
-# See https://tauri.app/start/prerequisites/ for platform-specific deps
-
-git clone <your-repo>
-cd your-app
-npm install
-npm run dev
+cd LifeJustHappening
+./build-app.sh
 ```
 
-## Documentation
+This creates `Life Just Happening.app` which you can:
 
-- **[Developer Docs](docs/developer/)** - Architecture, patterns, and detailed guides
-- **[User Guide](docs/userguide/)** - End-user documentation template
-- **[Using This Template](docs/USING_THIS_TEMPLATE.md)** - Setup and workflow guide
+1. Run directly: `open "Life Just Happening.app"`
+2. Move to `/Applications` for permanent installation
+
+## Usage
+
+1. **First launch** - Grant camera permission when prompted, optionally enable launch at login
+2. **Configure** - Click the camera icon in menu bar to access all settings
+3. **Set storage** - Choose Photos app or a custom folder
+4. **Set interval** - Adjust min/max capture interval (default 45-60 minutes)
+5. **Manage cameras** - If you have multiple webcams, drag to set priority
+
+### Pausing
+
+- Click **Pause** for indefinite pause
+- Or select a duration: 30 min, 1 hour, 2 hours
+- Click **Resume** to restart capturing
+
+### Wrapped
+
+At the end of the year, use the Wrapped feature to generate a video slideshow of all your captured moments.
+
+## Migrating from the Old Script
+
+If you were using the launchd script approach:
+
+```bash
+# Stop the old service
+launchctl unload ~/Library/LaunchAgents/com.user.imagesnapservice.plist
+
+# Build and run the new app
+cd LifeJustHappening
+./build-app.sh
+open "Life Just Happening.app"
+```
+
+## Privacy
+
+- Camera access is used only to capture photos at your configured interval
+- Photos app integration uses **add-only** access - the app cannot read your photo library
+- All data stays on your device
 
 ## License
 
 [MIT](LICENSE.md)
-
----
-
-Built with [Tauri](https://tauri.app) | [shadcn/ui](https://ui.shadcn.com) | [React](https://react.dev)
