@@ -5,9 +5,10 @@
 
 set -e
 
-APP_NAME="Life Just Happening"
+APP_NAME="lifejusthappening"
 BUNDLE_ID="com.yanniccharlon.lifejusthappening"
 EXECUTABLE_NAME="LifeJustHappening"
+DEV_REGION="en"
 
 # Build the Swift package
 echo "Building Swift package..."
@@ -28,9 +29,14 @@ mkdir -p "$RESOURCES_DIR"
 echo "Copying executable..."
 cp ".build/release/$EXECUTABLE_NAME" "$MACOS_DIR/$EXECUTABLE_NAME"
 
-# Copy Info.plist
+# Copy Info.plist and expand any remaining Xcode-style placeholders
 echo "Copying Info.plist..."
-cp "Sources/LifeJustHappening/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
+sed \
+    -e "s/\$(EXECUTABLE_NAME)/$EXECUTABLE_NAME/g" \
+    -e "s/\$(PRODUCT_BUNDLE_IDENTIFIER)/$BUNDLE_ID/g" \
+    -e "s/\$(DEVELOPMENT_LANGUAGE)/$DEV_REGION/g" \
+    -e "s/\$(PRODUCT_NAME)/$APP_NAME/g" \
+    "Sources/LifeJustHappening/Resources/Info.plist" > "$CONTENTS_DIR/Info.plist"
 
 # Copy entitlements (for reference, actual signing uses these)
 cp "Sources/LifeJustHappening/Resources/LifeJustHappening.entitlements" "$CONTENTS_DIR/"

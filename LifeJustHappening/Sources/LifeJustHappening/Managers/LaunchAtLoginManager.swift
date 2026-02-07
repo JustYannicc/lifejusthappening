@@ -13,6 +13,11 @@ final class LaunchAtLoginManager: ObservableObject {
 
     private let hasCompletedFirstLaunchKey = "hasCompletedFirstLaunch"
 
+    private var isRunningFromApplicationsFolder: Bool {
+        let appPath = Bundle.main.bundleURL.path
+        return appPath.hasPrefix("/Applications/") || appPath.hasPrefix("/System/Applications/")
+    }
+
     // MARK: - Computed Properties
 
     /// Whether this is the first launch of the app
@@ -38,6 +43,10 @@ final class LaunchAtLoginManager: ObservableObject {
     /// - Throws: An error if the operation fails
     func setEnabled(_ enabled: Bool) throws {
         lastError = nil
+
+        if enabled, !isRunningFromApplicationsFolder {
+            throw LaunchAtLoginError.requiresApplicationsInstall
+        }
 
         do {
             if enabled {
@@ -94,20 +103,27 @@ final class LaunchAtLoginManager: ObservableObject {
 enum LaunchAtLoginError: LocalizedError {
     case operationFailed(underlying: Error)
     case notSupported
+    case requiresApplicationsInstall
 
     var errorDescription: String? {
         switch self {
         case .operationFailed(let underlying):
-            return "Failed to update launch at login: \(underlying.localizedDescription)"
+            let description = underlying.localizedDescription
+            if description.localizedCaseInsensitiveContains("operation not permitted") {
+                return "Launch at login requires the app to be installed in /Applications and properly signed. Move the app to /Applications, open it once from there, then try again."
+            }
+            return "Failed to update launch at login: \(description)"
         case .notSupported:
             return "Launch at login is not supported on this system"
+        case .requiresApplicationsInstall:
+            return "Launch at login is only available when the app is installed in /Applications."
         }
     }
 }
 
 // MARK: - SMAppService.Status Extension
 
-extension SMAppService.Status: CustomStringConvertible {
+extension SMAppService.Status: @retroactive CustomStringConvertible {
     public var description: String {
         switch self {
         case .notRegistered:

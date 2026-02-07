@@ -21,7 +21,7 @@ enum PhotoStorageError: LocalizedError {
         case .photoLibraryAccessDenied:
             return "Photo library access was denied. Please grant access in System Settings > Privacy & Security > Photos."
         case .albumCreationFailed:
-            return "Failed to create the 'Life Just Happening' album in Photos."
+            return "Failed to create the '\(Constants.photosAlbumName)' album in Photos."
         case .imageConversionFailed:
             return "Failed to convert the image to JPEG format."
         case .fileSaveFailed(let error):
@@ -41,9 +41,11 @@ final class PhotoStorageManager: ObservableObject {
 
     // MARK: - Constants
 
-    private enum Constants {
-        static let albumName = "Life Just Happening"
+    private enum StorageConstants {
+        static let albumName = Constants.photosAlbumName
+        static let legacyAlbumName = Constants.legacyPhotosAlbumName
         static let folderBookmarkKey = "customFolderBookmark"
+        static let folderPathKey = "customFolderPath"
         static let storageModeKey = "storageMode"
         static let jpegCompressionQuality: CGFloat = 0.95
     }
@@ -58,6 +60,10 @@ final class PhotoStorageManager: ObservableObject {
     private let userDefaults: UserDefaults
     private var cachedAlbum: PHAssetCollection?
 
+    private var isSandboxed: Bool {
+        ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil
+    }
+
     // MARK: - Initialization
 
     init(userDefaults: UserDefaults = .standard) {
@@ -67,6 +73,13 @@ final class PhotoStorageManager: ObservableObject {
     }
 
     // MARK: - Public Methods
+
+    /// Reloads the storage location from UserDefaults.
+    /// Call this whenever SettingsManager's storage mode or custom folder bookmark changes
+    /// so that captures use the up-to-date destination.
+    func reloadStorageLocation() {
+        loadStorageLocation()
+    }
 
     /// Returns the current storage location
     func getCurrentStorageLocation() -> StorageLocation? {
@@ -101,30 +114,13 @@ final class PhotoStorageManager: ObservableObject {
         }
     }
 
-    /// Requests access to the Photos library with addOnly permission
-    /// Returns true if access was granted
-    @discardableResult
-    func requestPhotoLibraryAccess() -> Bool {
-        let semaphore = DispatchSemaphore(value: 0)
-        var granted = false
-
-        PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
-            granted = status == .authorized || status == .limited
-            self?.photoLibraryAuthorizationStatus = status
-            semaphore.signal()
-        }
-
-        semaphore.wait()
-
-        if granted {
-            setStorageMode(.photosApp)
-        }
-
-        return granted
-    }
-
-    /// Async version of requestPhotoLibraryAccess
-    func requestPhotoLibraryAccessAsync() async -> Bool {
+    /// Requests access to the Photos library with addOnly permission.
+    /// Returns true if access was granted.
+    ///
+    /// - Important: Always prefer ``requestPhotoLibraryAccess()`` (the async version).
+    ///   The synchronous variant has been removed because it blocked the main
+    ///   thread via a semaphore.
+    func requestPhotoLibraryAccess() async -> Bool {
         let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         await MainActor.run {
             photoLibraryAuthorizationStatus = status
@@ -141,8 +137,10 @@ final class PhotoStorageManager: ObservableObject {
         return granted
     }
 
-    /// Shows a folder picker and sets the selected folder as storage location
-    func selectCustomFolder() {
+    /// Shows a folder picker and sets the selected folder as storage location.
+    /// Uses async panel presentation to avoid blocking the UI.
+    @MainActor
+    func selectCustomFolder() async {
         let openPanel = NSOpenPanel()
         openPanel.canChooseFiles = false
         openPanel.canChooseDirectories = true
@@ -151,7 +149,8 @@ final class PhotoStorageManager: ObservableObject {
         openPanel.prompt = "Select Folder"
         openPanel.message = "Choose a folder to save your photos"
 
-        guard openPanel.runModal() == .OK, let selectedURL = openPanel.url else {
+        let response = await openPanel.begin()
+        guard response == .OK, let selectedURL = openPanel.url else {
             return
         }
 
@@ -167,8 +166,9 @@ final class PhotoStorageManager: ObservableObject {
     /// Clears the current storage location
     func clearStorageLocation() {
         currentLocation = nil
-        userDefaults.removeObject(forKey: Constants.storageModeKey)
-        userDefaults.removeObject(forKey: Constants.folderBookmarkKey)
+        userDefaults.removeObject(forKey: StorageConstants.storageModeKey)
+        userDefaults.removeObject(forKey: StorageConstants.folderBookmarkKey)
+        userDefaults.removeObject(forKey: StorageConstants.folderPathKey)
     }
 
     // MARK: - Private Methods - Storage Mode
@@ -178,15 +178,16 @@ final class PhotoStorageManager: ObservableObject {
 
         switch location {
         case .photosApp:
-            userDefaults.set("photosApp", forKey: Constants.storageModeKey)
-            userDefaults.removeObject(forKey: Constants.folderBookmarkKey)
+            userDefaults.set("photosApp", forKey: StorageConstants.storageModeKey)
+            userDefaults.removeObject(forKey: StorageConstants.folderBookmarkKey)
+            userDefaults.removeObject(forKey: StorageConstants.folderPathKey)
         case .customFolder:
-            userDefaults.set("customFolder", forKey: Constants.storageModeKey)
+            userDefaults.set("customFolder", forKey: StorageConstants.storageModeKey)
         }
     }
 
     private func loadStorageLocation() {
-        guard let mode = userDefaults.string(forKey: Constants.storageModeKey) else {
+        guard let mode = userDefaults.string(forKey: StorageConstants.storageModeKey) else {
             currentLocation = nil
             return
         }
@@ -195,7 +196,7 @@ final class PhotoStorageManager: ObservableObject {
         case "photosApp":
             currentLocation = .photosApp
         case "customFolder":
-            if let folderURL = resolveSecurityScopedBookmark() {
+            if let folderURL = resolveCustomFolderURL() {
                 currentLocation = .customFolder(folderURL)
             } else {
                 currentLocation = nil
@@ -212,42 +213,53 @@ final class PhotoStorageManager: ObservableObject {
     // MARK: - Private Methods - Security Scoped Bookmarks
 
     private func saveSecurityScopedBookmark(for url: URL) {
+        // Always store the plain path as a fallback
+        userDefaults.set(url.path, forKey: StorageConstants.folderPathKey)
+        
+        // Try to create a security-scoped bookmark (works when properly codesigned)
         do {
             let bookmarkData = try url.bookmarkData(
                 options: .withSecurityScope,
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             )
-            userDefaults.set(bookmarkData, forKey: Constants.folderBookmarkKey)
+            userDefaults.set(bookmarkData, forKey: StorageConstants.folderBookmarkKey)
         } catch {
-            print("Failed to create security-scoped bookmark: \(error)")
+            print("Security-scoped bookmark not available (expected if unsigned): \(error)")
         }
     }
 
-    private func resolveSecurityScopedBookmark() -> URL? {
-        guard let bookmarkData = userDefaults.data(forKey: Constants.folderBookmarkKey) else {
-            return nil
-        }
+    /// Resolves the custom folder URL, trying security-scoped bookmark first
+    /// then falling back to the stored path string.
+    private func resolveCustomFolderURL() -> URL? {
+        // Try security-scoped bookmark first
+        if let bookmarkData = userDefaults.data(forKey: StorageConstants.folderBookmarkKey) {
+            do {
+                var isStale = false
+                let url = try URL(
+                    resolvingBookmarkData: bookmarkData,
+                    options: .withSecurityScope,
+                    relativeTo: nil,
+                    bookmarkDataIsStale: &isStale
+                )
 
-        do {
-            var isStale = false
-            let url = try URL(
-                resolvingBookmarkData: bookmarkData,
-                options: .withSecurityScope,
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            )
+                if isStale {
+                    saveSecurityScopedBookmark(for: url)
+                }
 
-            if isStale {
-                // Bookmark is stale, try to create a new one
-                saveSecurityScopedBookmark(for: url)
+                return url
+            } catch {
+                print("Failed to resolve bookmark, falling back to stored path: \(error)")
             }
-
-            return url
-        } catch {
-            print("Failed to resolve security-scoped bookmark: \(error)")
-            return nil
         }
+
+        // Fallback: use the stored path string directly
+        if let path = userDefaults.string(forKey: StorageConstants.folderPathKey),
+           FileManager.default.fileExists(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+
+        return nil
     }
 
     // MARK: - Private Methods - Photos App Storage
@@ -272,7 +284,7 @@ final class PhotoStorageManager: ObservableObject {
     }
 
     private func performPhotosSave(image: NSImage, completion: @escaping (Bool, Error?) -> Void) {
-        guard let imageData = image.jpegData(compressionQuality: Constants.jpegCompressionQuality) else {
+        guard let imageData = image.jpegData(compressionQuality: StorageConstants.jpegCompressionQuality) else {
             DispatchQueue.main.async {
                 completion(false, PhotoStorageError.imageConversionFailed)
             }
@@ -330,7 +342,7 @@ final class PhotoStorageManager: ObservableObject {
 
         // Fetch existing album
         let fetchOptions = PHFetchOptions()
-        fetchOptions.predicate = NSPredicate(format: "title = %@", Constants.albumName)
+        fetchOptions.predicate = NSPredicate(format: "title = %@ OR title = %@", StorageConstants.albumName, StorageConstants.legacyAlbumName)
         let collections = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: fetchOptions)
 
         if let existingAlbum = collections.firstObject {
@@ -344,7 +356,7 @@ final class PhotoStorageManager: ObservableObject {
 
         do {
             try PHPhotoLibrary.shared().performChangesAndWait {
-                let createAlbumRequest = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: Constants.albumName)
+                let createAlbumRequest = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: StorageConstants.albumName)
                 albumPlaceholder = createAlbumRequest.placeholderForCreatedAssetCollection
             }
         } catch {
@@ -370,7 +382,8 @@ final class PhotoStorageManager: ObservableObject {
     // MARK: - Private Methods - Custom Folder Storage
 
     private func saveToCustomFolder(image: NSImage, folderURL: URL, completion: @escaping (Bool, Error?) -> Void) {
-        guard folderURL.startAccessingSecurityScopedResource() else {
+        let hasSecurityScopeAccess = folderURL.startAccessingSecurityScopedResource()
+        if isSandboxed && !hasSecurityScopeAccess {
             DispatchQueue.main.async {
                 completion(false, PhotoStorageError.folderAccessLost)
             }
@@ -378,10 +391,12 @@ final class PhotoStorageManager: ObservableObject {
         }
 
         defer {
-            folderURL.stopAccessingSecurityScopedResource()
+            if hasSecurityScopeAccess {
+                folderURL.stopAccessingSecurityScopedResource()
+            }
         }
 
-        guard let imageData = image.jpegData(compressionQuality: Constants.jpegCompressionQuality) else {
+        guard let imageData = image.jpegData(compressionQuality: StorageConstants.jpegCompressionQuality) else {
             DispatchQueue.main.async {
                 completion(false, PhotoStorageError.imageConversionFailed)
             }
@@ -408,6 +423,128 @@ final class PhotoStorageManager: ObservableObject {
         dateFormatter.dateFormat = "dd-MM-yyyy 'at' HH-mm"
         let dateString = dateFormatter.string(from: Date())
         return "Moment \(dateString).jpg"
+    }
+
+    // MARK: - Recent Photos
+
+    /// Represents a recent photo with its thumbnail and creation date
+    struct RecentPhoto: Identifiable {
+        let id = UUID()
+        let thumbnail: NSImage
+        let creationDate: Date
+        let url: URL?
+    }
+
+    /// Fetches the most recent photos from the current storage location
+    /// - Parameter count: Maximum number of photos to return
+    /// - Returns: Array of recent photos sorted newest-first
+    func fetchRecentPhotos(count: Int = 4) -> [RecentPhoto] {
+        guard let location = currentLocation else { return [] }
+
+        switch location {
+        case .photosApp:
+            return fetchRecentFromPhotosApp(count: count)
+        case .customFolder(let url):
+            return fetchRecentFromFolder(url, count: count)
+        }
+    }
+
+    private func fetchRecentFromFolder(_ folderURL: URL, count: Int) -> [RecentPhoto] {
+        let hasAccess = folderURL.startAccessingSecurityScopedResource()
+        defer {
+            if hasAccess { folderURL.stopAccessingSecurityScopedResource() }
+        }
+
+        let fileManager = FileManager.default
+        let supportedExtensions = Set(["jpg", "jpeg", "png", "heic", "heif", "tiff", "tif"])
+
+        guard let enumerator = fileManager.enumerator(
+            at: folderURL,
+            includingPropertiesForKeys: [.creationDateKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
+        ) else {
+            return []
+        }
+
+        var files: [(url: URL, date: Date)] = []
+        for case let fileURL as URL in enumerator {
+            guard supportedExtensions.contains(fileURL.pathExtension.lowercased()) else { continue }
+            let date = (try? fileURL.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? Date.distantPast
+            files.append((fileURL, date))
+        }
+
+        // Sort newest first and take the requested count
+        files.sort { $0.date > $1.date }
+        let recent = files.prefix(count)
+
+        return recent.compactMap { file in
+            guard let image = NSImage(contentsOf: file.url) else { return nil }
+            let thumb = image.scaled(toFit: NSSize(width: 80, height: 80))
+            return RecentPhoto(thumbnail: thumb, creationDate: file.date, url: file.url)
+        }
+    }
+
+    private func fetchRecentFromPhotosApp(count: Int) -> [RecentPhoto] {
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        guard status == .authorized || status == .limited else { return [] }
+
+        let fetchOptions = PHFetchOptions()
+        fetchOptions.predicate = NSPredicate(
+            format: "title = %@ OR title = %@",
+            StorageConstants.albumName,
+            StorageConstants.legacyAlbumName
+        )
+        let collections = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: fetchOptions)
+        guard collections.count > 0 else { return [] }
+
+        // Gather assets from all matching albums
+        var allAssets: [PHAsset] = []
+        var seenIDs = Set<String>()
+
+        let assetOptions = PHFetchOptions()
+        assetOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        assetOptions.fetchLimit = count
+
+        collections.enumerateObjects { album, _, stop in
+            let assets = PHAsset.fetchAssets(in: album, options: assetOptions)
+            assets.enumerateObjects { asset, _, _ in
+                if !seenIDs.contains(asset.localIdentifier) {
+                    seenIDs.insert(asset.localIdentifier)
+                    allAssets.append(asset)
+                }
+            }
+            if allAssets.count >= count {
+                stop.pointee = true
+            }
+        }
+
+        // Sort newest first and limit
+        allAssets.sort { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
+        let limited = allAssets.prefix(count)
+
+        return limited.compactMap { asset in
+            let options = PHImageRequestOptions()
+            options.isSynchronous = true
+            options.deliveryMode = .fastFormat
+            options.resizeMode = .fast
+
+            var result: RecentPhoto?
+            PHImageManager.default().requestImage(
+                for: asset,
+                targetSize: CGSize(width: 80, height: 80),
+                contentMode: .aspectFill,
+                options: options
+            ) { image, _ in
+                if let image {
+                    result = RecentPhoto(
+                        thumbnail: image,
+                        creationDate: asset.creationDate ?? Date(),
+                        url: nil
+                    )
+                }
+            }
+            return result
+        }
     }
 }
 

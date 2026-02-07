@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
-	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<string>en</string>
 	<key>CFBundleExecutable</key>
-	<string>$(EXECUTABLE_NAME)</string>
+	<string>LifeJustHappening</string>
 	<key>CFBundleIconFile</key>
 	<string></string>
 	<key>CFBundleIconName</key>
@@ -15,9 +15,9 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Life Just Happening</string>
+	<string>lifejusthappening</string>
 	<key>CFBundleDisplayName</key>
-	<string>Life Just Happening</string>
+	<string>lifejusthappening</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -29,16 +29,14 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Life Just Happening needs camera access to capture photos of your moments throughout the day.</string>
+	<string>lifejusthappening needs camera access to capture photos of your moments throughout the day.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Life Just Happening needs permission to save captured photos to your Photo Library.</string>
+	<string>lifejusthappening needs permission to save captured photos to your Photo Library.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>lifejusthappening needs read access to your Photo Library to generate your year-end Wrapped video from captured moments.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
-	<key>UIRequiredDeviceCapabilities</key>
-	<array>
-		<string>arm64</string>
-	</array>
 </dict>
 </plist>

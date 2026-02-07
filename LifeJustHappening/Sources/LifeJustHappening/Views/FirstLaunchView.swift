@@ -17,11 +17,11 @@ struct FirstLaunchView: View {
                     .font(.system(size: 48))
                     .foregroundStyle(.blue)
 
-                Text("Welcome to Life Just Happening")
+                Text("Welcome to \(Constants.appName)")
                     .font(.title2)
                     .fontWeight(.semibold)
 
-                Text("Capture moments automatically, every day")
+                Text("Capture moments automatically at random intervals")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -32,8 +32,8 @@ struct FirstLaunchView: View {
             VStack(alignment: .leading, spacing: 16) {
                 FeatureRow(
                     icon: "clock",
-                    title: "Automatic Daily Photos",
-                    description: "Takes a photo once per day to document your life"
+                    title: "Automatic Random Photos",
+                    description: "Captures moments at random intervals throughout the day"
                 )
 
                 FeatureRow(
@@ -54,7 +54,7 @@ struct FirstLaunchView: View {
 
             // Launch at login prompt
             VStack(spacing: 8) {
-                Text("Start Life Just Happening automatically?")
+                Text("Start \(Constants.appName) automatically?")
                     .font(.headline)
 
                 Text("You can change this later in Settings")

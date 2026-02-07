@@ -5,11 +5,12 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
-    private var eventMonitor: Any?
+    private var firstLaunchWindow: NSWindow?
 
     // MARK: - Managers
 
-    private let cameraManager = CameraManager()
+    private let coordinator = CaptureCoordinator()
+    private let launchAtLoginManager = LaunchAtLoginManager()
 
     // MARK: - App Lifecycle
 
@@ -17,11 +18,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
         setupPopover()
         setupNotificationObservers()
+        coordinator.start()
+
+        if launchAtLoginManager.isFirstLaunch {
+            showFirstLaunchWindow()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        coordinator.stop()
         removeNotificationObservers()
-        removeEventMonitor()
     }
 
     // MARK: - Status Item Setup
@@ -33,7 +39,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        button.image = NSImage(systemSymbolName: "camera.fill", accessibilityDescription: "Life Just Happening")
+        button.image = NSImage(
+            systemSymbolName: "camera.fill",
+            accessibilityDescription: Constants.appName
+        )
+        if let image = button.image {
+            image.isTemplate = true
+        } else {
+            button.title = "ljh"
+        }
+        button.toolTip = Constants.appName
         button.action = #selector(togglePopover)
         button.target = self
     }
@@ -47,12 +62,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.animates = true
 
         let contentView = MenuContentView()
-            .environmentObject(cameraManager)
+            .environmentObject(coordinator.cameraManager)
+            .environmentObject(coordinator.timerManager)
+            .environmentObject(coordinator.settingsManager)
+            .environmentObject(coordinator)
 
         popover.contentViewController = NSHostingController(rootView: contentView)
 
         self.popover = popover
     }
+
+    // MARK: - First Launch Window
+
+    private func showFirstLaunchWindow() {
+        let firstLaunchView = FirstLaunchView(launchAtLoginManager: launchAtLoginManager)
+        let hostingController = NSHostingController(rootView: firstLaunchView)
+
+        let window = NSWindow(contentViewController: hostingController)
+        window.title = "Welcome"
+        window.styleMask = [.titled, .closable]
+        window.isReleasedWhenClosed = false
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+
+        // Bring app to front for the first launch window
+        NSApplication.shared.activate(ignoringOtherApps: true)
+
+        self.firstLaunchWindow = window
+
+        // Observe window close to clean up
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(firstLaunchWindowDidClose),
+            name: NSWindow.willCloseNotification,
+            object: window
+        )
+    }
+
+    @objc private func firstLaunchWindowDidClose(_ notification: Notification) {
+        firstLaunchWindow = nil
+        if launchAtLoginManager.isFirstLaunch {
+            launchAtLoginManager.skipFirstLaunchSetup()
+        }
+    }
+
+    // MARK: - Popover Toggle
 
     @objc private func togglePopover() {
         guard let popover, let button = statusItem?.button else {
@@ -68,29 +122,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showPopover(relativeTo button: NSStatusBarButton) {
         popover?.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        setupEventMonitor()
     }
 
     private func closePopover() {
         popover?.performClose(nil)
-        removeEventMonitor()
-    }
-
-    // MARK: - Event Monitor (Click Outside Detection)
-
-    private func setupEventMonitor() {
-        eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            if self?.popover?.isShown == true {
-                self?.closePopover()
-            }
-        }
-    }
-
-    private func removeEventMonitor() {
-        if let eventMonitor {
-            NSEvent.removeMonitor(eventMonitor)
-            self.eventMonitor = nil
-        }
     }
 
     // MARK: - Notification Observers (Sleep/Wake)

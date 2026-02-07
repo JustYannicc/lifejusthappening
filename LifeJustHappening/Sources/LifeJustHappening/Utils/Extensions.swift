@@ -91,6 +91,11 @@ extension NSImage {
 // MARK: - URL+SecurityScoped
 
 extension URL {
+    /// Returns the path string with the home directory replaced by ~
+    var abbreviatingWithTildeInPath: String {
+        (path as NSString).abbreviatingWithTildeInPath
+    }
+
     /// Creates a security-scoped bookmark for the URL
     /// - Returns: Bookmark data, or nil if creation fails
     func createSecurityScopedBookmark() -> Data? {

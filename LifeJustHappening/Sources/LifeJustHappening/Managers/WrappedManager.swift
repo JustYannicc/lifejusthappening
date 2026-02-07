@@ -93,11 +93,14 @@ private struct PhotoItem {
 
 // MARK: - Wrapped Manager
 
-/// Manages year-end video compilation generation from captured photos
-@MainActor
+/// Manages year-end video compilation generation from captured photos.
+///
+/// Published properties are updated on MainActor; heavy IO and encoding
+/// run on a background task so the UI never blocks.
 final class WrappedManager: ObservableObject {
     // MARK: - Singleton
 
+    @MainActor
     static let shared = WrappedManager()
 
     // MARK: - Published Properties
@@ -114,13 +117,17 @@ final class WrappedManager: ObservableObject {
     // MARK: - Private Properties
 
     private let photoStorageManager: PhotoStorageManager
-    private var cancellationRequested: Bool = false
     private var currentTask: Task<Void, Never>?
+
+    private var isSandboxed: Bool {
+        ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil
+    }
 
     // MARK: - Constants
 
-    private enum Constants {
-        static let albumName = "Life Just Happening"
+    private enum WrappedConstants {
+        static let albumName = Constants.photosAlbumName
+        static let legacyAlbumName = Constants.legacyPhotosAlbumName
         static let supportedImageExtensions = ["jpg", "jpeg", "png", "heic", "heif", "tiff", "tif"]
     }
 
@@ -147,9 +154,11 @@ final class WrappedManager: ObservableObject {
     }
 
     /// Refreshes the available years list
+    @MainActor
     func refreshAvailableYears() {
-        Task {
-            _ = await getAvailableYears()
+        Task.detached { [weak self] in
+            guard let self else { return }
+            _ = await self.getAvailableYears()
         }
     }
 
@@ -159,6 +168,7 @@ final class WrappedManager: ObservableObject {
     ///   - outputURL: Optional custom output URL. If nil, user will be prompted to select location.
     ///   - progressHandler: Optional callback for progress updates (0-1)
     ///   - completion: Called with the output URL on success, or error on failure
+    @MainActor
     func generateWrapped(
         year: Int,
         outputURL: URL? = nil,
@@ -172,12 +182,11 @@ final class WrappedManager: ObservableObject {
 
         isGenerating = true
         progress = 0
-        cancellationRequested = false
         lastError = nil
 
         currentTask = Task {
             do {
-                // Determine output URL
+                // Determine output URL (panel runs on MainActor)
                 let finalOutputURL: URL
                 if let outputURL {
                     finalOutputURL = outputURL
@@ -188,24 +197,32 @@ final class WrappedManager: ObservableObject {
                     finalOutputURL = selectedURL
                 }
 
-                // Fetch photos for the year
+                // Fetch and encode on a background thread
                 let photos = await fetchPhotosForYear(year)
 
                 guard !photos.isEmpty else {
                     throw WrappedError.noPhotosFound
                 }
 
-                // Generate video
-                let resultURL = try await generateVideo(
-                    from: photos,
-                    outputURL: finalOutputURL,
-                    progressHandler: { [weak self] progress in
-                        Task { @MainActor in
-                            self?.progress = progress
-                            progressHandler?(progress)
+                // Generate video off MainActor while inheriting cancellation
+                // from currentTask (unlike Task.detached which does not propagate cancellation).
+                let config = self.configuration
+                let parentTask = self.currentTask
+                let resultURL = try await Task.detached { [weak self] () -> URL in
+                    guard let self else { throw WrappedError.cancelled }
+                    return try await self.generateVideo(
+                        from: photos,
+                        configuration: config,
+                        outputURL: finalOutputURL,
+                        parentTask: parentTask,
+                        progressHandler: { [weak self] progress in
+                            Task { @MainActor in
+                                self?.progress = progress
+                                progressHandler?(progress)
+                            }
                         }
-                    }
-                )
+                    )
+                }.value
 
                 await MainActor.run {
                     self.isGenerating = false
@@ -222,30 +239,8 @@ final class WrappedManager: ObservableObject {
         }
     }
 
-    /// Async version of generateWrapped
-    func generateWrapped(
-        year: Int,
-        outputURL: URL? = nil,
-        progressHandler: ((Double) -> Void)? = nil
-    ) async throws -> URL {
-        try await withCheckedThrowingContinuation { continuation in
-            generateWrapped(
-                year: year,
-                outputURL: outputURL,
-                progressHandler: progressHandler
-            ) { url, error in
-                if let url {
-                    continuation.resume(returning: url)
-                } else {
-                    continuation.resume(throwing: error ?? WrappedError.cancelled)
-                }
-            }
-        }
-    }
-
     /// Cancels ongoing video generation
     func cancelGeneration() {
-        cancellationRequested = true
         currentTask?.cancel()
         currentTask = nil
     }
@@ -288,27 +283,38 @@ final class WrappedManager: ObservableObject {
     }
 
     private func fetchPhotosFromAlbum() async -> [PhotoItem] {
-        // Fetch the "Life Just Happening" album
+        // Fetch both the current and legacy album names for backward compatibility
         let fetchOptions = PHFetchOptions()
-        fetchOptions.predicate = NSPredicate(format: "title = %@", Constants.albumName)
+        fetchOptions.predicate = NSPredicate(
+            format: "title = %@ OR title = %@",
+            WrappedConstants.albumName,
+            WrappedConstants.legacyAlbumName
+        )
         let collections = PHAssetCollection.fetchAssetCollections(
             with: .album,
             subtype: .any,
             options: fetchOptions
         )
 
-        guard let album = collections.firstObject else {
+        guard collections.count > 0 else {
             return []
         }
 
-        // Fetch assets from the album
+        // Collect photos from all matching albums (deduplicating by asset localIdentifier)
+        var photos: [PhotoItem] = []
+        var seenIdentifiers = Set<String>()
+
         let assetFetchOptions = PHFetchOptions()
         assetFetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
-        let assets = PHAsset.fetchAssets(in: album, options: assetFetchOptions)
 
-        var photos: [PhotoItem] = []
-        assets.enumerateObjects { asset, _, _ in
-            if let creationDate = asset.creationDate {
+        collections.enumerateObjects { album, _, _ in
+            let assets = PHAsset.fetchAssets(in: album, options: assetFetchOptions)
+            assets.enumerateObjects { asset, _, _ in
+                guard !seenIdentifiers.contains(asset.localIdentifier),
+                      let creationDate = asset.creationDate else {
+                    return
+                }
+                seenIdentifiers.insert(asset.localIdentifier)
                 photos.append(PhotoItem(url: nil, asset: asset, creationDate: creationDate))
             }
         }
@@ -317,12 +323,15 @@ final class WrappedManager: ObservableObject {
     }
 
     private func fetchPhotosFromFolder(_ folderURL: URL) -> [PhotoItem] {
-        guard folderURL.startAccessingSecurityScopedResource() else {
+        let hasSecurityScopeAccess = folderURL.startAccessingSecurityScopedResource()
+        if isSandboxed && !hasSecurityScopeAccess {
             return []
         }
 
         defer {
-            folderURL.stopAccessingSecurityScopedResource()
+            if hasSecurityScopeAccess {
+                folderURL.stopAccessingSecurityScopedResource()
+            }
         }
 
         let fileManager = FileManager.default
@@ -339,7 +348,7 @@ final class WrappedManager: ObservableObject {
 
         for case let fileURL as URL in enumerator {
             let pathExtension = fileURL.pathExtension.lowercased()
-            guard Constants.supportedImageExtensions.contains(pathExtension) else {
+            guard WrappedConstants.supportedImageExtensions.contains(pathExtension) else {
                 continue
             }
 
@@ -367,32 +376,29 @@ final class WrappedManager: ObservableObject {
 
     // MARK: - Private Methods - Output Location
 
+    @MainActor
     private func selectOutputLocation(year: Int) async -> URL? {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.main.async {
-                let savePanel = NSSavePanel()
-                savePanel.allowedContentTypes = [.mpeg4Movie]
-                savePanel.nameFieldStringValue = "Life Just Happening \(year).mp4"
-                savePanel.canCreateDirectories = true
-                savePanel.title = "Save Wrapped Video"
-                savePanel.message = "Choose where to save your \(year) wrapped video"
+        let savePanel = NSSavePanel()
+        savePanel.allowedContentTypes = [.mpeg4Movie]
+        savePanel.nameFieldStringValue = "lifejusthappening \(year).mp4"
+        savePanel.canCreateDirectories = true
+        savePanel.title = "Save Wrapped Video"
+        savePanel.message = "Choose where to save your \(year) wrapped video"
 
-                let response = savePanel.runModal()
-
-                if response == .OK {
-                    continuation.resume(returning: savePanel.url)
-                } else {
-                    continuation.resume(returning: nil)
-                }
-            }
+        let response = await savePanel.begin()
+        if response == .OK {
+            return savePanel.url
         }
+        return nil
     }
 
     // MARK: - Private Methods - Video Generation
 
     private func generateVideo(
         from photos: [PhotoItem],
+        configuration: WrappedConfiguration,
         outputURL: URL,
+        parentTask: Task<Void, Never>? = nil,
         progressHandler: @escaping (Double) -> Void
     ) async throws -> URL {
         // Remove existing file if present
@@ -450,8 +456,9 @@ final class WrappedManager: ObservableObject {
         let frameDuration = CMTime(value: 1, timescale: CMTimeScale(configuration.frameRate))
 
         for (index, photo) in photos.enumerated() {
-            // Check for cancellation
-            if cancellationRequested {
+            // Check for cancellation via cooperative Task cancellation.
+            // We also check parentTask since Task.detached does not inherit cancellation.
+            if Task.isCancelled || parentTask?.isCancelled == true {
                 assetWriter.cancelWriting()
                 throw WrappedError.cancelled
             }
@@ -473,7 +480,7 @@ final class WrappedManager: ObservableObject {
 
             // Write frames for this photo
             for _ in 0..<configuration.framesPerPhoto {
-                if cancellationRequested {
+                if Task.isCancelled || parentTask?.isCancelled == true {
                     assetWriter.cancelWriting()
                     throw WrappedError.cancelled
                 }

@@ -18,6 +18,7 @@ final class SettingsManager: ObservableObject {
         static let maxIntervalMinutes = "maxIntervalMinutes"
         static let storageMode = "storageMode"
         static let customFolderBookmark = "customFolderBookmark"
+        static let customFolderPath = "customFolderPath"
         static let cameraPriorities = "cameraPriorities"
         static let disabledCameras = "disabledCameras"
         static let launchAtLogin = "launchAtLogin"
@@ -122,34 +123,45 @@ final class SettingsManager: ObservableObject {
         isPaused && !isPauseExpired
     }
     
-    /// Resolves the custom folder URL from the security-scoped bookmark
+    /// Resolves the custom folder URL from the security-scoped bookmark,
+    /// falling back to the stored path if the bookmark cannot be resolved
+    /// (e.g. app is not codesigned / not sandboxed).
     var customFolderURL: URL? {
-        guard let bookmark = customFolderBookmark else { return nil }
-        
-        var isStale = false
-        do {
-            let url = try URL(
-                resolvingBookmarkData: bookmark,
-                options: .withSecurityScope,
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            )
-            
-            if isStale {
-                // Bookmark is stale, attempt to refresh
-                refreshCustomFolderBookmark(from: url)
+        // Try security-scoped bookmark first
+        if let bookmark = customFolderBookmark {
+            var isStale = false
+            do {
+                let url = try URL(
+                    resolvingBookmarkData: bookmark,
+                    options: .withSecurityScope,
+                    relativeTo: nil,
+                    bookmarkDataIsStale: &isStale
+                )
+                
+                if isStale {
+                    refreshCustomFolderBookmark(from: url)
+                }
+                
+                return url
+            } catch {
+                print("Failed to resolve bookmark, falling back to stored path: \(error)")
             }
-            
-            return url
-        } catch {
-            print("Failed to resolve custom folder bookmark: \(error)")
-            return nil
         }
+        
+        // Fallback: use the stored path string directly
+        if let path = defaults.string(forKey: Keys.customFolderPath) {
+            let url = URL(fileURLWithPath: path)
+            if FileManager.default.fileExists(atPath: path) {
+                return url
+            }
+        }
+        
+        return nil
     }
     
     // MARK: - Initialization
     
-    private init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         
         // Load values from UserDefaults
@@ -198,6 +210,10 @@ final class SettingsManager: ObservableObject {
     }
     
     func setCustomFolder(url: URL) {
+        // Always store the plain path as a fallback for non-sandboxed builds
+        defaults.set(url.path, forKey: Keys.customFolderPath)
+        
+        // Try to create a security-scoped bookmark (works when properly codesigned)
         do {
             let bookmark = try url.bookmarkData(
                 options: .withSecurityScope,
@@ -206,7 +222,8 @@ final class SettingsManager: ObservableObject {
             )
             customFolderBookmark = bookmark
         } catch {
-            print("Failed to create bookmark for folder: \(error)")
+            print("Security-scoped bookmark not available (expected if unsigned): \(error)")
+            // The plain path fallback above will be used instead
         }
     }
     
@@ -264,6 +281,7 @@ final class SettingsManager: ObservableObject {
         maxIntervalMinutes = Defaults.maxIntervalMinutes
         storageMode = Defaults.storageMode
         customFolderBookmark = nil
+        defaults.removeObject(forKey: Keys.customFolderPath)
         cameraPriorities = [:]
         disabledCameras = []
         launchAtLogin = Defaults.launchAtLogin

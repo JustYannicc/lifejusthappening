@@ -1,8 +1,10 @@
 # macOS
 .DS_Store
 *.swp
+.Trashes
+._*
 
-# Swift
+# Swift / Xcode
 .build/
 *.xcodeproj
 *.xcworkspace
@@ -13,10 +15,14 @@ xcuserdata/
 
 # Build artifacts
 *.app
+*.zip
+*.dmg
 
 # Editor
 .idea/
 .vscode/
+*.sublime-project
+*.sublime-workspace
 
 # Captured photos (local data)
 *.jpg
