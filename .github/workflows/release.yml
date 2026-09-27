@@ -11,12 +11,9 @@ permissions:
 jobs:
   build-and-release:
     name: Build & Release
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
 
       - name: Build
         working-directory: LifeJustHappening
@@ -29,7 +26,6 @@ jobs:
       - name: Build App Bundle
         working-directory: LifeJustHappening
         run: |
-          chmod +x build-app.sh
           ./build-app.sh
 
       - name: Create ZIP archive
@@ -53,16 +49,10 @@ jobs:
             LifeJustHappening/LifeJustHappening-${{ github.ref_name }}-mac.zip
           body: |
             ## Install
-
-            ### Homebrew
-            ```bash
-            brew install --cask lifejusthappening
-            ```
-
-            ### Manual
             1. Download **LifeJustHappening-${{ github.ref_name }}-mac.zip** below
-            2. Unzip and drag **Life Just Happening.app** to `/Applications`
-            3. Open it from your Applications folder
+            2. Unzip and move **lifejusthappening.app** to `/Applications`
+            3. The build is ad-hoc signed, so right-click → Open the first time
+            4. Connect Google Photos: see docs/google-photos-setup.md
 
             ### SHA256
             ```

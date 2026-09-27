@@ -4,16 +4,18 @@ import PackageDescription
 let package = Package(
     name: "LifeJustHappening",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v14)
     ],
     products: [
         .executable(name: "LifeJustHappening", targets: ["LifeJustHappening"])
     ],
-    dependencies: [],
+    dependencies: [
+        .package(url: "https://github.com/getsentry/sentry-cocoa.git", from: "9.29.2")
+    ],
     targets: [
         .executableTarget(
             name: "LifeJustHappening",
-            dependencies: [],
+            dependencies: [.product(name: "Sentry", package: "sentry-cocoa")],
             path: "Sources/LifeJustHappening",
             exclude: [
                 "Resources/Info.plist",

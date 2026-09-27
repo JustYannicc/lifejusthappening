@@ -21,19 +21,19 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>2.0</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>2</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>13.0</string>
+	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>lifejusthappening needs camera access to capture photos of your moments throughout the day.</string>
-	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>lifejusthappening needs permission to save captured photos to your Photo Library.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>lifejusthappening needs read access to your Photo Library to generate your year-end Wrapped video from captured moments.</string>
+	<string>lifejusthappening needs camera access to take a photo every so often and upload it to your Google Photos.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>lifejusthappening adds where each photo was taken to its metadata, so it shows up on the map in Google Photos.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>lifejusthappening adds where each photo was taken to its metadata, so it shows up on the map in Google Photos.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSPrincipalClass</key>

@@ -5,14 +5,11 @@ struct LifeJustHappeningApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     init() {
-        // Set app as accessory (menu bar only, no dock icon)
+        // Menu bar only, no Dock icon.
         NSApplication.shared.setActivationPolicy(.accessory)
     }
 
     var body: some Scene {
-        // Menu bar only app - no windows
-        Settings {
-            EmptyView()
-        }
+        Settings { EmptyView() }
     }
 }

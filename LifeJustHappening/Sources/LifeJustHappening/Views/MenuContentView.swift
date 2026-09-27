@@ -1,689 +1,261 @@
-import ServiceManagement
 import SwiftUI
 
-// MARK: - Main Menu Content View
-
+/// The popover: the latest photo, what happens next, and two buttons. Everything
+/// configurable lives in the Settings window.
 struct MenuContentView: View {
-    // MARK: - Environment
-
-    @EnvironmentObject private var cameraManager: CameraManager
-    @EnvironmentObject private var timerManager: TimerManager
-    @EnvironmentObject private var settingsManager: SettingsManager
-    @EnvironmentObject private var coordinator: CaptureCoordinator
-
-    // MARK: - Local UI State
-
-    @State private var isTimerExpanded: Bool = false
-    @State private var isStorageExpanded: Bool = false
-    @State private var isCameraExpanded: Bool = false
-    @State private var isWrappedExpanded: Bool = false
-    @State private var isAppSettingsExpanded: Bool = false
-
-    @State private var showPauseDurationPicker: Bool = false
-    @State private var pauseDurationMinutes: Int = 30
-
-    @StateObject private var wrappedManager = WrappedManager.shared
-
-    @State private var selectedYear: Int = Calendar.current.component(.year, from: Date())
-    @State private var wrappedProgress: Double = 0
-    @State private var isGeneratingWrapped: Bool = false
-
-    @State private var recentPhotos: [PhotoStorageManager.RecentPhoto] = []
-
-    // MARK: - Body
+    @ObservedObject var coordinator: CaptureCoordinator
+    let openSettings: (SettingsTab) -> Void
+    var openFeedback: () -> Void = {}
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                statusSection
-                Divider()
-                quickActionsSection
-                Divider()
-                timerSettingsSection
-                Divider()
-                storageSettingsSection
-                Divider()
-                cameraSettingsSection
-                Divider()
-                wrappedSection
-                Divider()
-                appSettingsSection
-            }
-            .padding(16)
-        }
-        .frame(width: 320)
-        .frame(maxHeight: 500)
-    }
-
-    // MARK: - Status Section
-
-    private var statusSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "Status", systemImage: "info.circle")
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("Current:")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    statusBadge
+        VStack(alignment: .leading, spacing: 12) {
+            RecentStrip(coordinator: coordinator, recent: coordinator.recent)
+            StatusView(coordinator: coordinator)
+            ActionsRow(coordinator: coordinator)
+            if let nudge = SetupNudge(coordinator: coordinator) {
+                Button { openSettings(nudge.tab) } label: {
+                    Label(nudge.text, systemImage: "exclamationmark.circle.fill")
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-
-                HStack {
-                    Text("Last capture:")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(lastCaptureText)
-                        .fontWeight(.medium)
-                }
-
-                HStack {
-                    Text("Next capture:")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(nextCaptureText)
-                        .fontWeight(.medium)
-                }
-
-                HStack {
-                    Text("Photos captured:")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(settingsManager.totalPhotosCaptured)")
-                        .fontWeight(.medium)
-                }
-            }
-            .font(.system(.body, design: .rounded))
-        }
-    }
-
-    @ViewBuilder
-    private var statusBadge: some View {
-        if !timerManager.isRunning {
-            Label("Stopped", systemImage: "stop.circle.fill")
-                .foregroundStyle(.gray)
-                .fontWeight(.medium)
-        } else if timerManager.isPaused {
-            if let endTime = timerManager.pauseEndTime {
-                Label(
-                    "Paused until \(endTime.formatted(date: .omitted, time: .shortened))",
-                    systemImage: "pause.circle.fill"
-                )
+                .buttonStyle(.plain)
                 .foregroundStyle(.orange)
-                .fontWeight(.medium)
-            } else {
-                Label("Paused", systemImage: "pause.circle.fill")
-                    .foregroundStyle(.orange)
-                    .fontWeight(.medium)
+                .font(.callout)
             }
+            Divider()
+            FooterRow(coordinator: coordinator, openSettings: openSettings, openFeedback: openFeedback)
+        }
+        .padding(14)
+        .frame(width: 320)
+        .onAppear { coordinator.homeAppeared() }
+    }
+}
+
+/// Only for things that stop the app from doing its job. Nice-to-haves stay in Settings.
+private struct SetupNudge {
+    let text: String
+    let tab: SettingsTab
+
+    @MainActor
+    init?(coordinator: CaptureCoordinator) {
+        if coordinator.cameras.authorization != .authorized {
+            (text, tab) = ("Camera access needed", .permissions)
+        } else if !coordinator.account.isSignedIn {
+            (text, tab) = ("Google Photos isn't connected, photos are waiting", .googlePhotos)
         } else {
-            Label("Active", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-                .fontWeight(.medium)
+            return nil
         }
     }
+}
 
-    private var lastCaptureText: String {
-        guard let lastDate = settingsManager.lastCaptureDate else {
-            return "never"
-        }
+// MARK: - Recent photos
 
-        let interval = Date().timeIntervalSince(lastDate)
+private struct RecentStrip: View {
+    @ObservedObject var coordinator: CaptureCoordinator
+    @ObservedObject var recent: RecentPhotos
 
-        if interval < 60 {
-            return "just now"
-        }
-
-        if interval < 3600 {
-            let minutes = Int(interval / 60)
-            return "\(minutes) min ago"
-        }
-
-        // If it was today, show the time
-        if Calendar.current.isDateInToday(lastDate) {
-            return "today at \(lastDate.formatted(date: .omitted, time: .shortened))"
-        }
-
-        // If it was yesterday
-        if Calendar.current.isDateInYesterday(lastDate) {
-            return "yesterday at \(lastDate.formatted(date: .omitted, time: .shortened))"
-        }
-
-        return lastDate.formatted(date: .abbreviated, time: .shortened)
-    }
-
-    private var nextCaptureText: String {
-        guard timerManager.isRunning, !timerManager.isPaused else {
-            return "\u{2014}"
-        }
-
-        guard let nextTime = timerManager.nextCaptureTime else {
-            return "scheduling..."
-        }
-
-        let interval = nextTime.timeIntervalSince(Date())
-
-        if interval <= 0 {
-            return "any moment"
-        }
-
-        let minutes = Int(interval / 60)
-        if minutes < 60 {
-            return "in \(minutes) min"
-        }
-
-        return nextTime.formatted(date: .omitted, time: .shortened)
-    }
-
-    // MARK: - Quick Actions Section
-
-    private var quickActionsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "Quick Actions", systemImage: "bolt.fill")
-
-            HStack(spacing: 10) {
-                if !timerManager.isPaused {
-                    Button {
-                        showPauseDurationPicker.toggle()
-                    } label: {
-                        Label("Pause", systemImage: "pause.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityLabel("Pause capture")
-
-                    if showPauseDurationPicker {
-                        Picker("Pause duration", selection: $pauseDurationMinutes) {
-                            Text("30m").tag(30)
-                            Text("1h").tag(60)
-                            Text("2h").tag(120)
-                            Text("\u{221E}").tag(0)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Recent")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                if let url = coordinator.album?.productURL {
+                    Link(destination: url) {
+                        HStack(spacing: 2) {
+                            Text(recent.albumCount.map { "All \($0.formatted())" } ?? "See all")
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
                         }
-                        .pickerStyle(.segmented)
-                        .accessibilityLabel("Pause duration")
-                        .frame(width: 140)
-                        .onChange(of: pauseDurationMinutes) { newValue in
-                            if newValue == 0 {
-                                coordinator.pause()
-                            } else {
-                                coordinator.pause(duration: Double(newValue) * 60)
-                            }
-                            showPauseDurationPicker = false
-                        }
+                        .font(.subheadline)
                     }
-                } else {
-                    Button {
-                        coordinator.resume()
-                        showPauseDurationPicker = false
-                    } label: {
-                        Label("Resume", systemImage: "play.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityLabel("Resume capture")
+                    .help("Open the lifejusthappening album in Google Photos")
                 }
             }
-
-            HStack(spacing: 10) {
-                Button {
-                    coordinator.captureNow()
-                } label: {
-                    Label("Take Photo Now", systemImage: "camera.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .accessibilityLabel("Take a photo now")
-
-                Button(role: .destructive) {
-                    NSApplication.shared.terminate(nil)
-                } label: {
-                    Label("Quit", systemImage: "power")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .accessibilityLabel("Quit app")
-            }
-        }
-    }
-
-    // MARK: - Timer Settings Section
-
-    private var timerSettingsSection: some View {
-        DisclosureGroup(isExpanded: $isTimerExpanded) {
-            VStack(alignment: .leading, spacing: 12) {
-                let minBinding = Binding<Double>(
-                    get: { Double(settingsManager.minIntervalMinutes) },
-                    set: { settingsManager.setIntervalRange(min: Int($0), max: settingsManager.maxIntervalMinutes) }
-                )
-                let maxBinding = Binding<Double>(
-                    get: { Double(settingsManager.maxIntervalMinutes) },
-                    set: { settingsManager.setIntervalRange(min: settingsManager.minIntervalMinutes, max: Int($0)) }
-                )
-
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("Min interval")
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text("\(settingsManager.minIntervalMinutes) min")
-                            .monospacedDigit()
-                    }
-                    .font(.caption)
-
-                    Slider(
-                        value: minBinding,
-                        in: 15...120,
-                        step: 5
-                    )
-                    .accessibilityLabel("Minimum capture interval")
-                    .accessibilityValue("\(settingsManager.minIntervalMinutes) minutes")
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("Max interval")
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text("\(settingsManager.maxIntervalMinutes) min")
-                            .monospacedDigit()
-                    }
-                    .font(.caption)
-
-                    Slider(
-                        value: maxBinding,
-                        in: Double(settingsManager.minIntervalMinutes)...120,
-                        step: 5
-                    )
-                    .accessibilityLabel("Maximum capture interval")
-                    .accessibilityValue("\(settingsManager.maxIntervalMinutes) minutes")
-                }
-
-                HStack {
-                    Spacer()
-                    Text("Range: \(settingsManager.minIntervalMinutes)-\(settingsManager.maxIntervalMinutes) minutes")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.vertical, 4)
-                        .padding(.horizontal, 8)
-                        .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 4))
-                    Spacer()
+            HStack(spacing: 6) {
+                ForEach(0..<RecentPhotos.count, id: \.self) { index in
+                    tile(at: index)
                 }
             }
-            .padding(.top, 8)
-        } label: {
-            SectionHeader(title: "Timer Settings", systemImage: "timer")
-        }
-    }
-
-    // MARK: - Storage Settings Section
-
-    private var storageSettingsSection: some View {
-        DisclosureGroup(isExpanded: $isStorageExpanded) {
-            VStack(alignment: .leading, spacing: 12) {
-                Picker("Storage location", selection: settingsManager.storageModeBinding) {
-                    ForEach(SettingsManager.StorageMode.allCases, id: \.self) { mode in
-                        Text(mode.displayName).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .accessibilityLabel("Storage location")
-
-                if settingsManager.storageMode == .customFolder {
-                    HStack {
-                        if let folderURL = settingsManager.customFolderURL {
-                            Image(systemName: "folder.fill")
-                                .foregroundStyle(.secondary)
-                                .font(.caption)
-                            Text(folderURL.abbreviatingWithTildeInPath)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .help(folderURL.path)
-                        } else {
-                            Image(systemName: "exclamationmark.triangle")
-                                .foregroundStyle(.orange)
-                                .font(.caption)
-                            Text("No folder selected")
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                        }
-
-                        Spacer()
-
-                        Button("Change") {
-                            selectCustomFolder()
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    }
-                }
-
-                // Recent photos preview
-                recentPhotosPreview
-            }
-            .padding(.top, 8)
-            .onAppear { loadRecentPhotos() }
-            .onChange(of: settingsManager.storageMode) { _ in loadRecentPhotos() }
-            .onChange(of: settingsManager.totalPhotosCaptured) { _ in loadRecentPhotos() }
-        } label: {
-            SectionHeader(title: "Storage", systemImage: "folder.fill")
         }
     }
 
     @ViewBuilder
-    private var recentPhotosPreview: some View {
-        if !recentPhotos.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Recent")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                HStack(spacing: 6) {
-                    ForEach(recentPhotos) { photo in
-                        Image(nsImage: photo.thumbnail)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 58, height: 58)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                            .help(photo.creationDate.formatted(date: .abbreviated, time: .shortened))
-                    }
-
-                    Spacer()
-                }
-
-                Button {
-                    openStorageLocation()
-                } label: {
-                    Label("See all photos", systemImage: seeAllIcon)
-                        .font(.caption)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+    private func tile(at index: Int) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        ZStack {
+            shape.fill(.quaternary.opacity(0.6))
+            if index == 0, coordinator.isCapturing {
+                ProgressView().controlSize(.small)
+            } else if index < recent.thumbnails.count {
+                let thumb = recent.thumbnails[index]
+                Image(nsImage: thumb.image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .help(thumb.date?.formatted(date: .abbreviated, time: .shortened) ?? "")
+                    .accessibilityLabel("Photo from \(thumb.date?.formatted() ?? "unknown date")")
+            } else if index == 0, !recent.isLoading {
+                Image(systemName: "camera.aperture")
+                    .foregroundStyle(.tertiary)
             }
         }
-    }
-
-    private var seeAllIcon: String {
-        settingsManager.storageMode == .photosApp ? "photo.on.rectangle" : "folder"
-    }
-
-    // MARK: - Camera Settings Section
-
-    private var cameraSettingsSection: some View {
-        DisclosureGroup(isExpanded: $isCameraExpanded) {
-            WebcamPriorityView()
-                .padding(.top, 8)
-        } label: {
-            SectionHeader(title: "Camera", systemImage: "camera")
-        }
-    }
-
-    // MARK: - Wrapped Section
-
-    private var wrappedSection: some View {
-        DisclosureGroup(isExpanded: $isWrappedExpanded) {
-            VStack(alignment: .leading, spacing: 12) {
-                Picker("Year", selection: $selectedYear) {
-                    ForEach(wrappedManager.availableYears, id: \.self) { year in
-                        Text(String(year)).tag(year)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .accessibilityLabel("Select year for wrapped video")
-
-                if isGeneratingWrapped {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ProgressView(value: wrappedProgress, total: 1.0) {
-                            Text("Generating Wrapped...")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .progressViewStyle(.linear)
-
-                        Text("\(Int(wrappedProgress * 100))%")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                } else {
-                    Button {
-                        generateWrapped()
-                    } label: {
-                        Label("Generate Wrapped", systemImage: "sparkles")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                }
-            }
-            .padding(.top, 8)
-            .onAppear {
-                wrappedManager.refreshAvailableYears()
-            }
-        } label: {
-            SectionHeader(title: "Wrapped", systemImage: "sparkles.rectangle.stack")
-        }
-    }
-
-    // MARK: - App Settings Section
-
-    private var appSettingsSection: some View {
-        DisclosureGroup(isExpanded: $isAppSettingsExpanded) {
-            VStack(alignment: .leading, spacing: 12) {
-                Toggle(
-                    "Launch at Login",
-                    isOn: Binding(
-                        get: { settingsManager.launchAtLogin },
-                        set: { newValue in
-                            setLaunchAtLogin(newValue)
-                        }
-                    )
-                )
-                    .accessibilityLabel("Launch at login")
-
-                Divider()
-
-                Button(role: .destructive) {
-                    NSApplication.shared.terminate(nil)
-                } label: {
-                    Label("Quit", systemImage: "power")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-            }
-            .padding(.top, 8)
-        } label: {
-            SectionHeader(title: "App Settings", systemImage: "gear")
-        }
-    }
-
-    // MARK: - Actions
-
-    private func loadRecentPhotos() {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let photos = PhotoStorageManager.shared.fetchRecentPhotos(count: 4)
-            DispatchQueue.main.async {
-                self.recentPhotos = photos
-            }
-        }
-    }
-
-    private func openStorageLocation() {
-        if settingsManager.storageMode == .photosApp {
-            // Open Photos app
-            NSWorkspace.shared.open(URL(string: "photos://")!)
-        } else if let folderURL = settingsManager.customFolderURL {
-            // Open the folder in Finder
-            NSWorkspace.shared.open(folderURL)
-        }
-    }
-
-    private func selectCustomFolder() {
-        // Close the popover first so the NSOpenPanel can properly become key.
-        // Transient popovers auto-dismiss when another window takes focus,
-        // which causes the panel response to be lost.
-        NSApp.sendAction(#selector(NSPopover.performClose(_:)), to: nil, from: nil)
-
-        // Run on the next run-loop tick so the popover has time to close.
-        DispatchQueue.main.async {
-            let panel = NSOpenPanel()
-            panel.canChooseFiles = false
-            panel.canChooseDirectories = true
-            panel.allowsMultipleSelection = false
-            panel.canCreateDirectories = true
-            panel.message = "Select a folder to save photos"
-            panel.prompt = "Select Folder"
-
-            // Use runModal so the panel is app-modal and doesn't depend on
-            // the now-closed popover for focus.
-            let response = panel.runModal()
-            if response == .OK, let url = panel.url {
-                self.settingsManager.setCustomFolder(url: url)
-                self.settingsManager.setStorageMode(.customFolder)
-            }
-        }
-    }
-
-    private func generateWrapped() {
-        isGeneratingWrapped = true
-        wrappedProgress = 0
-
-        wrappedManager.generateWrapped(
-            year: selectedYear,
-            progressHandler: { progress in
-                Task { @MainActor in
-                    self.wrappedProgress = progress
-                }
-            }
-        ) { _, error in
-            Task { @MainActor in
-                self.isGeneratingWrapped = false
-                if let error {
-                    self.wrappedProgress = 0
-                    print("Wrapped generation failed: \(error.localizedDescription)")
-                }
-            }
-        }
-    }
-
-    private func setLaunchAtLogin(_ enabled: Bool) {
-        do {
-            if enabled {
-                try SMAppService.mainApp.register()
-            } else {
-                try SMAppService.mainApp.unregister()
-            }
-            settingsManager.setLaunchAtLogin(enabled)
-        } catch {
-            print("Failed to update launch at login: \(error.localizedDescription)")
-        }
+        .aspectRatio(1, contentMode: .fit)
+        .frame(maxWidth: .infinity)
+        .clipShape(shape)
     }
 }
 
-// MARK: - Section Header
+// MARK: - Status
 
-struct SectionHeader: View {
-    let title: String
-    let systemImage: String
+private struct StatusView: View {
+    @ObservedObject var coordinator: CaptureCoordinator
 
     var body: some View {
-        Label(title, systemImage: systemImage)
-            .font(.headline)
-            .foregroundStyle(.primary)
+        TimelineView(.periodic(from: .now, by: 15)) { _ in
+            VStack(alignment: .leading, spacing: 4) {
+                Text(headline)
+                    .font(.headline)
+                if let detail {
+                    Text(detail)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
     }
-}
 
-// MARK: - Webcam Priority View
+    private var headline: String {
+        if coordinator.isCapturing { return "Taking a photo…" }
+        if case .paused(let until) = coordinator.pause {
+            guard let until else { return "Paused" }
+            return "Paused until \(until.formatted(date: Calendar.current.isDateInToday(until) ? .omitted : .abbreviated, time: .shortened))"
+        }
+        if let reason = coordinator.activity.inactiveReason { return "Waiting · \(reason.lowercased())" }
+        if !coordinator.hasUsableCamera {
+            return coordinator.activity.isLidClosed ? "Skipping · lid closed, no webcam" : "Skipping · no camera"
+        }
+        if coordinator.schedule.misses > 0 { return "Nobody there, looking again soon" }
+        let minutes = max(1, Int((coordinator.schedule.remainingActiveSeconds / 60).rounded()))
+        guard minutes >= 60 else { return "Next photo in about \(minutes) min" }
+        let rest = (minutes % 60) / 5 * 5
+        return "Next photo in about \(minutes / 60) h" + (rest > 0 ? " \(rest) min" : "")
+    }
 
-struct WebcamPriorityView: View {
-    @EnvironmentObject private var cameraManager: CameraManager
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if cameraManager.cameras.isEmpty {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                        .accessibilityHidden(true)
-                    Text("No cameras detected")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                Text("Drag to reorder priority")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                ForEach(cameraManager.cameras) { camera in
-                    CameraRow(camera: camera)
-                }
-            }
-
-            if cameraManager.authorizationStatus != .authorized {
-                HStack {
-                    Image(systemName: "lock.fill")
-                        .foregroundStyle(.red)
-                        .accessibilityHidden(true)
-                    Text("Camera access required")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Spacer()
-
-                    Button("Grant") {
-                        cameraManager.requestAuthorization { _ in }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .accessibilityLabel("Grant camera access")
-                }
-                .padding(.top, 4)
-            }
+    private var detail: String? {
+        guard let outcome = coordinator.lastOutcome else {
+            return coordinator.lastCaptureDate.map { "Last photo \($0.formatted(.relative(presentation: .named)))" }
+        }
+        let ago = outcome.date.formatted(.relative(presentation: .named))
+        switch outcome.result {
+        case .captured(let camera): return "Last photo \(ago), \(camera)"
+        case .skipped(.nobodyThere), .skipped(.noUsableCamera): return nil
+        case .skipped(let reason): return "Skipped \(ago): \(reason.text)"
         }
     }
 }
 
-// MARK: - Camera Row
+// MARK: - Actions
 
-struct CameraRow: View {
-    let camera: CameraDevice
-
-    @EnvironmentObject private var cameraManager: CameraManager
-    @State private var isEnabled: Bool = true
+private struct ActionsRow: View {
+    @ObservedObject var coordinator: CaptureCoordinator
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "line.3.horizontal")
-                .foregroundStyle(.tertiary)
-                .font(.caption)
-                .accessibilityHidden(true)
+            Button {
+                coordinator.captureNow()
+            } label: {
+                Label("Take photo now", systemImage: "camera.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .disabled(coordinator.isCapturing)
 
-            Image(systemName: camera.isBuiltIn ? "laptopcomputer" : "video.fill")
-                .foregroundStyle(.secondary)
-                .frame(width: 20)
-                .accessibilityHidden(true)
-
-            Text(camera.localizedName)
-                .font(.caption)
-                .lineLimit(1)
-
-            Spacer()
-
-            Toggle("Enable \(camera.localizedName)", isOn: $isEnabled)
-                .toggleStyle(.switch)
-                .controlSize(.mini)
-                .labelsHidden()
-                .onChange(of: isEnabled) { newValue in
-                    cameraManager.setCamera(camera.uniqueID, enabled: newValue)
+            if coordinator.isPaused {
+                Button {
+                    coordinator.resume()
+                } label: {
+                    Label("Resume", systemImage: "play.fill")
+                        .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.borderedProminent)
+            } else {
+                Menu {
+                    Button("For 30 minutes") { coordinator.pause(for: 30 * 60) }
+                    Button("For 1 hour") { coordinator.pause(for: 60 * 60) }
+                    Button("For 2 hours") { coordinator.pause(for: 2 * 60 * 60) }
+                    Button("Until tomorrow morning") { coordinator.pauseUntilTomorrow() }
+                    Divider()
+                    Button("Until I resume") { coordinator.pause(for: nil) }
+                } label: {
+                    Label("Pause", systemImage: "pause.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .menuStyle(.button)
+                .menuIndicator(.hidden)
+            }
         }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 8)
-        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(camera.localizedName), \(isEnabled ? "enabled" : "disabled")")
-        .onAppear {
-            isEnabled = camera.isEnabled
+        .buttonStyle(.bordered)
+        .controlSize(.large)
+    }
+}
+
+// MARK: - Footer
+
+private struct FooterRow: View {
+    @ObservedObject var coordinator: CaptureCoordinator
+    let openSettings: (SettingsTab) -> Void
+    let openFeedback: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            uploadStatus
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Menu {
+                Button("Settings…") { openSettings(.general) }
+                    .keyboardShortcut(",")
+                if let url = coordinator.album?.productURL {
+                    Link("Open album in Google Photos", destination: url)
+                }
+                Button("Send feedback…", action: openFeedback)
+                Divider()
+                Button("Quit lifejusthappening") { NSApp.terminate(nil) }
+                    .keyboardShortcut("q")
+            } label: {
+                Image(systemName: "gearshape")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .accessibilityLabel("Settings and more")
+        }
+    }
+
+    @ViewBuilder
+    private var uploadStatus: some View {
+        let import_ = coordinator.legacyImport.progress
+        if let import_, import_.isRunning {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Uploading old photos · \(import_.done.formatted()) of \(import_.total.formatted())", systemImage: "icloud.and.arrow.up")
+                ProgressView(value: Double(import_.done + import_.rejected), total: Double(max(1, import_.total)))
+                    .controlSize(.small)
+            }
+        } else if !coordinator.account.isSignedIn {
+            Label(coordinator.uploads.pending > 0 ? "\(coordinator.uploads.pending) waiting, Google not connected" : "Google Photos not connected",
+                  systemImage: "icloud.slash")
+        } else if coordinator.isUploading {
+            Label("Uploading…", systemImage: "icloud.and.arrow.up")
+        } else if coordinator.uploads.pending > 0 {
+            Label("\(coordinator.uploads.pending) waiting to upload", systemImage: "arrow.up.circle")
+        } else if let import_, import_.remaining > 0, import_.failure != nil {
+            Label(import_.isRateLimited
+                  ? "Old photos: \(import_.done.formatted()) of \(import_.total.formatted()), Google's limit, retrying in 30 min"
+                  : "Old photos: \(import_.done.formatted()) of \(import_.total.formatted()), retrying shortly",
+                  systemImage: "clock.arrow.circlepath")
+                .help(import_.failure ?? "")
+        } else {
+            let count = coordinator.recent.albumCount ?? coordinator.totalCaptured
+            Label("\(count.formatted()) photos in the album", systemImage: "checkmark.icloud")
         }
     }
 }
