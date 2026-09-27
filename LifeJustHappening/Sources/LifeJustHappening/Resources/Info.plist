@@ -4,6 +4,8 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>lifejusthappening</string>
 	<key>CFBundleExecutable</key>
 	<string>LifeJustHappening</string>
 	<key>CFBundleIconFile</key>
@@ -16,12 +18,10 @@
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>lifejusthappening</string>
-	<key>CFBundleDisplayName</key>
-	<string>lifejusthappening</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>2.0</string>
+	<string>2.0.0</string>
 	<key>CFBundleVersion</key>
 	<string>2</string>
 	<key>LSMinimumSystemVersion</key>
@@ -30,12 +30,12 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>lifejusthappening needs camera access to take a photo every so often and upload it to your Google Photos.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
 	<key>NSLocationUsageDescription</key>
 	<string>lifejusthappening adds where each photo was taken to its metadata, so it shows up on the map in Google Photos.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>lifejusthappening adds where each photo was taken to its metadata, so it shows up on the map in Google Photos.</string>
-	<key>NSHighResolutionCapable</key>
-	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

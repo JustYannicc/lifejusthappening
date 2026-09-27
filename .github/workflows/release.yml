@@ -52,11 +52,14 @@ jobs:
           files: |
             LifeJustHappening/LifeJustHappening-${{ github.ref_name }}-mac.zip
           body: |
+            Rebuilt from scratch: photos go straight into a `lifejusthappening` album in Google Photos, with time, location and camera in the metadata. The gap between photos only counts time you're actually at the Mac (AI agents driving it don't count), cameras follow a priority list, and clamshell without a webcam just skips.
+
             ## Install
-            1. Download **LifeJustHappening-${{ github.ref_name }}-mac.zip** below
-            2. Unzip and move **lifejusthappening.app** to `/Applications`
-            3. The build is ad-hoc signed, so right-click → Open the first time
-            4. Connect Google Photos: see docs/google-photos-setup.md
+            1. Download **LifeJustHappening-${{ github.ref_name }}-mac.zip** below, unzip, move **lifejusthappening.app** to `/Applications`.
+            2. It isn't notarized, so macOS blocks the first launch. Open it once, then **System Settings → Privacy & Security → Open Anyway**. Or run `xattr -dr com.apple.quarantine /Applications/lifejusthappening.app`.
+            3. Connect Google Photos: [docs/google-photos-setup.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/google-photos-setup.md).
+
+            This download is ad-hoc signed, so macOS asks for camera/location/Input Monitoring again after each update. Building it yourself with `./build-app.sh` signs it with your own certificate and keeps them.
 
             ### SHA256
             ```
